@@ -36,8 +36,8 @@ def load_countries():
             connection.execute(
                 query,
                 {
-                    "name": country["name"],
-                    "code": country["code"],
+                    "name": country.name,
+                    "code": country.alpha_2,
                     "admin_level": 0,  # Countries are top level
                     "map": None,
                 },
