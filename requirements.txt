@@ -1,0 +1,2 @@
+pycountry==24.6.1
+sqlalchemy==2.0.39
