@@ -1,5 +1,5 @@
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pycountry
 from airflow import DAG
@@ -9,8 +9,7 @@ from sqlalchemy import create_engine, text
 default_args = {
     "owner": "causality",
     "depends_on_past": False,
-    "email_on_failure": False,
-    "email_on_retry": False,
+    "start_date": datetime(2025, 3, 23),
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
 }
@@ -47,7 +46,7 @@ def load_countries():
 
 
 with DAG(
-    "countries_dag",
+    "load_countries_dag",
     default_args=default_args,
     description="Load countries from pycountry into database",
     schedule_interval="@once",
