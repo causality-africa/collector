@@ -7,7 +7,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from sqlalchemy import create_engine, text
 
-from utils.storage import download_from_backblaze
+from .utils.storage import download_from_backblaze
 
 default_args = {
     "owner": "causality",
