@@ -1,4 +1,3 @@
-import os
 from decimal import Decimal
 from datetime import datetime, timedelta
 
@@ -271,7 +270,7 @@ INDICATOR_MAPPING = {
     },
     "LBsurvivingAge1": {
         "name": "Live Births Surviving to Age 1",
-        "code": "births-surviving-1yr",
+        "code": "births-surviving-1",
         "category": "population",
         "description": "Annual births who survive to age 1",
         "unit": "persons",
@@ -390,8 +389,26 @@ INDICATOR_MAPPING = {
     },
 }
 
+IN_THOUSANDS = {
+    "total-population",
+    "male-population",
+    "female-population",
+    "population-natural-change",
+    "population-change",
+    "births",
+    "births-15-19",
+    "deaths",
+    "male-deaths",
+    "female-deaths",
+    "infant-deaths",
+    "births-surviving-1",
+    "under5-deaths",
+    "net-migrants",
+}
+
+
 def load_wpp_indicators():
-    """Create indicators for WPP data columns"""
+    """Create indicators for WPP data."""
     with get_db_connection() as conn:
         # Create data source for WPP
         with conn.cursor() as cur:
@@ -410,7 +427,7 @@ def load_wpp_indicators():
                     "UN World Population Prospects",
                     "https://population.un.org/wpp/",
                     "United Nations population estimates and projections",
-                )
+                ),
             )
             source_id = cur.fetchone()[0]
 
@@ -437,15 +454,16 @@ def load_wpp_indicators():
                         metadata["description"],
                         metadata["unit"],
                         "numeric",
-                    )
+                    ),
                 )
 
             conn.commit()
 
     return source_id
 
+
 def load_wpp_data(**context):
-    """Load WPP data into the database"""
+    """Load WPP data into the database."""
     # Get indicator mapping and source ID from previous task
     ti = context["ti"]
     source_id = ti.xcom_pull(task_ids="load_wpp_indicators")
@@ -480,8 +498,9 @@ def load_wpp_data(**context):
                     for wpp_col, metadata in INDICATOR_MAPPING.items():
                         if pd.notna(row.get(wpp_col)):
                             # Get indicator ID
+                            indicator = metadata["code"]
                             ind_query = "SELECT id FROM indicators WHERE code = %s"
-                            cur.execute(ind_query, (metadata["code"],))
+                            cur.execute(ind_query, (indicator,))
                             indicator_id = cur.fetchone()[0]
 
                             # Insert the data point
@@ -495,6 +514,10 @@ def load_wpp_data(**context):
                                 DO UPDATE SET numeric_value = EXCLUDED.numeric_value
                             """
 
+                            value = Decimal(row[wpp_col])
+                            if indicator in IN_THOUSANDS:
+                                value *= 1_000
+
                             cur.execute(
                                 data_query,
                                 (
@@ -503,9 +526,9 @@ def load_wpp_data(**context):
                                     indicator_id,
                                     source_id,
                                     date_str,
-                                    Decimal(row[wpp_col]),
+                                    value,
                                     None,
-                                )
+                                ),
                             )
 
                 # Commit after processing a batch of records
@@ -513,6 +536,7 @@ def load_wpp_data(**context):
                     conn.commit()
 
             conn.commit()
+
 
 with DAG(
     "load_wpp_data_dag",
