@@ -4,7 +4,7 @@ import psycopg
 
 
 def get_db_connection() -> psycopg.Connection:
-    conn_str = os.environ.get("AIRFLOW__CORE__SQL_ALCHEMY_CONN")
+    conn_str = os.environ.get("AIRFLOW__DATABASE__SQL_ALCHEMY_CONN")
 
     # Extract connection parameters from SQLAlchemy URL
     if conn_str.startswith("postgresql://"):
