@@ -15,6 +15,7 @@ default_args = {
 
 
 def load_countries():
+    """Load countries from pycountry into database."""
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             for country in pycountry.countries:
