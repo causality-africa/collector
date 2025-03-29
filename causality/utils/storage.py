@@ -1,7 +1,8 @@
 import os
+import tempfile
+
 import boto3
 from botocore.client import Config
-import tempfile
 
 
 def download_from_backblaze(bucket_name, remote_path) -> str:
