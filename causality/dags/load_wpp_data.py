@@ -456,7 +456,7 @@ def load_wpp_data(**context):
         "demographics/WPP2024_Demographic_Indicators_Medium.csv",
     )
 
-    wpp_data = pd.read_csv(wpp_file, delimiter="\t")
+    wpp_data = pd.read_csv(wpp_file, delimiter=",")
 
     with get_db_connection() as conn:
         # Process each row in the WPP data
