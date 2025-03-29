@@ -1,3 +1,4 @@
-pycountry==24.6.1
-pandas==2.2.3
 boto3==1.35.99
+pandas==2.2.3
+psycopg[binary]==3.2.6
+pycountry==24.6.1
