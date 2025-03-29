@@ -9,10 +9,9 @@ def download_from_backblaze(bucket_name, remote_path) -> str:
     """
     Download a file from Backblaze B2 to a local path.
     """
-    if local_path is None:
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-        local_path = temp_file.name
-        temp_file.close()
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+    local_path = temp_file.name
+    temp_file.close()
 
     s3 = boto3.client(
         "s3",
