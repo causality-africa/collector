@@ -1,10 +1,10 @@
-import os
 from datetime import datetime, timedelta
 
 import pycountry
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from sqlalchemy import create_engine, text
+
+from causality.utils.db import get_db_connection
 
 default_args = {
     "owner": "causality",
@@ -15,33 +15,32 @@ default_args = {
 
 
 def load_countries():
-    conn_str = os.environ.get("AIRFLOW__CORE__SQL_ALCHEMY_CONN")
-    engine = create_engine(conn_str)
-
-    with engine.connect() as connection:
-        for country in pycountry.countries:
-            query = text(
-                """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            for country in pycountry.countries:
+                query = """
                     INSERT INTO locations (name, code, admin_level, map)
-                    VALUES (:name, :code, :admin_level, :map)
+                    VALUES (%s, %s, %s, %s)
                     ON CONFLICT (code) DO UPDATE SET
-                        name = :name,
-                        admin_level = :admin_level,
-                        map = :map
+                        name = %s,
+                        admin_level = %s,
+                        map = %s
                 """
-            )
 
-            connection.execute(
-                query,
-                {
-                    "name": country.name,
-                    "code": country.alpha_2,
-                    "admin_level": 0,  # Countries are top level
-                    "map": None,
-                },
-            )
+                cur.execute(
+                    query,
+                    (
+                        country.name,
+                        country.alpha_2,
+                        0,  # Countries are top level
+                        None,
+                        country.name,
+                        0,
+                        None,
+                    ),
+                )
 
-        connection.commit()
+            conn.commit()
 
 
 with DAG(

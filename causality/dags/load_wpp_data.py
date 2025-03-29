@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from sqlalchemy import create_engine, text
 
+from causality.utils.db import get_db_connection
 from causality.utils.storage import download_from_backblaze
 
 default_args = {
@@ -390,73 +390,62 @@ INDICATOR_MAPPING = {
     },
 }
 
-
 def load_wpp_indicators():
     """Create indicators for WPP data columns"""
-    conn_str = os.environ.get("AIRFLOW__CORE__SQL_ALCHEMY_CONN")
-    engine = create_engine(conn_str)
-
-    with engine.connect() as connection:
+    with get_db_connection() as conn:
         # Create data source for WPP
-        source_query = text(
-            """
-            INSERT INTO data_sources (name, url, description)
-            VALUES (:name, :url, :description)
-            ON CONFLICT (name) DO UPDATE SET
-                url = :url,
-                description = :description
-            RETURNING id
-            """
-        )
-
-        result = connection.execute(
-            source_query,
-            {
-                "name": "UN World Population Prospects",
-                "url": "https://population.un.org/wpp/",
-                "description": "United Nations population estimates and projections",
-            },
-        )
-        source_id = result.fetchone()[0]
-
-        # Create indicators
-        for metadata in INDICATOR_MAPPING.values():
-            indicator_query = text(
-                """
-                INSERT INTO indicators (name, code, category, description, unit, data_type)
-                VALUES (:name, :code, :category, :description, :unit, :data_type)
-                ON CONFLICT (code) DO UPDATE SET
-                    name = :name,
-                    category = :category,
-                    description = :description,
-                    unit = :unit,
-                    data_type = :data_type
+        with conn.cursor() as cur:
+            source_query = """
+                INSERT INTO data_sources (name, url, description)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (name) DO UPDATE SET
+                    url = EXCLUDED.url,
+                    description = EXCLUDED.description
                 RETURNING id
+            """
+
+            cur.execute(
+                source_query,
+                (
+                    "UN World Population Prospects",
+                    "https://population.un.org/wpp/",
+                    "United Nations population estimates and projections",
+                )
+            )
+            source_id = cur.fetchone()[0]
+
+            # Create indicators
+            for metadata in INDICATOR_MAPPING.values():
+                indicator_query = """
+                    INSERT INTO indicators (name, code, category, description, unit, data_type)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (code) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        category = EXCLUDED.category,
+                        description = EXCLUDED.description,
+                        unit = EXCLUDED.unit,
+                        data_type = EXCLUDED.data_type
+                    RETURNING id
                 """
-            )
 
-            connection.execute(
-                indicator_query,
-                {
-                    "name": metadata["name"],
-                    "code": metadata["code"],
-                    "category": metadata["category"],
-                    "description": metadata["description"],
-                    "unit": metadata["unit"],
-                    "data_type": "numeric",
-                },
-            )
+                cur.execute(
+                    indicator_query,
+                    (
+                        metadata["name"],
+                        metadata["code"],
+                        metadata["category"],
+                        metadata["description"],
+                        metadata["unit"],
+                        "numeric",
+                    )
+                )
 
-        connection.commit()
+            conn.commit()
 
     return source_id
 
-
 def load_wpp_data(**context):
     """Load WPP data into the database"""
-    conn_str = os.environ.get("AIRFLOW__CORE__SQL_ALCHEMY_CONN")
-    engine = create_engine(conn_str)
-
     # Get indicator mapping and source ID from previous task
     ti = context["ti"]
     source_id = ti.xcom_pull(task_ids="load_wpp_indicators")
@@ -469,69 +458,61 @@ def load_wpp_data(**context):
 
     wpp_data = pd.read_csv(wpp_file, delimiter="\t")
 
-    with engine.connect() as connection:
+    with get_db_connection() as conn:
         # Process each row in the WPP data
-        for i, row in wpp_data.iterrows():
-            if not pd.notna(row["ISO2_code"]):
-                continue
+        with conn.cursor() as cur:
+            for i, row in wpp_data.iterrows():
+                if not pd.notna(row["ISO2_code"]):
+                    continue
 
-            # Find or create location
-            # Get location ID for this country
-            loc_query = text("SELECT id FROM locations WHERE code = :code")
-            result = connection.execute(loc_query, {"code": row["ISO2_code"]})
-            loc_record = result.fetchone()
+                # Get location ID for this country
+                loc_query = "SELECT id FROM locations WHERE code = %s"
+                cur.execute(loc_query, (row["ISO2_code"],))
+                loc_record = cur.fetchone()
 
-            if loc_record:
-                location_id = loc_record[0]
+                if loc_record:
+                    location_id = loc_record[0]
 
-                # Process each indicator
-                year = int(row["Time"])
-                date_str = f"{year}-07-01"  # July 1st for mid-year data
+                    # Process each indicator
+                    year = int(row["Time"])
+                    date_str = f"{year}-07-01"  # July 1st for mid-year data
 
-                for wpp_col, metadata in INDICATOR_MAPPING.items():
-                    if pd.notna(row.get(wpp_col)):
-                        # Get indicator ID
-                        ind_query = text("SELECT id FROM indicators WHERE code = :code")
-                        result = connection.execute(
-                            ind_query, {"code": metadata["code"]}
-                        )
-                        indicator_id = result.fetchone()[0]
+                    for wpp_col, metadata in INDICATOR_MAPPING.items():
+                        if pd.notna(row.get(wpp_col)):
+                            # Get indicator ID
+                            ind_query = "SELECT id FROM indicators WHERE code = %s"
+                            cur.execute(ind_query, (metadata["code"],))
+                            indicator_id = cur.fetchone()[0]
 
-                        # Insert the data point
-                        data_query = text(
+                            # Insert the data point
+                            data_query = """
+                                INSERT INTO data_points (
+                                    entity_type, entity_id, indicator_id, source_id,
+                                    date, numeric_value, text_value
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (entity_type, entity_id, indicator_id, source_id, date)
+                                DO UPDATE SET numeric_value = EXCLUDED.numeric_value
                             """
-                            INSERT INTO data_points (
-                                entity_type, entity_id, indicator_id, source_id,
-                                date, numeric_value, text_value
+
+                            cur.execute(
+                                data_query,
+                                (
+                                    "location",
+                                    location_id,
+                                    indicator_id,
+                                    source_id,
+                                    date_str,
+                                    Decimal(row[wpp_col]),
+                                    None,
+                                )
                             )
-                            VALUES (
-                                :entity_type, :entity_id, :indicator_id, :source_id,
-                                :date, :numeric_value, :text_value
-                            )
-                            ON CONFLICT (entity_type, entity_id, indicator_id, source_id, date)
-                            DO UPDATE SET numeric_value = :numeric_value
-                            """
-                        )
 
-                        connection.execute(
-                            data_query,
-                            {
-                                "entity_type": "location",
-                                "entity_id": location_id,
-                                "indicator_id": indicator_id,
-                                "source_id": source_id,
-                                "date": date_str,
-                                "numeric_value": Decimal(row[wpp_col]),
-                                "text_value": None,
-                            },
-                        )
+                # Commit after processing a batch of records
+                if i % 100 == 0:
+                    conn.commit()
 
-            # Commit after processing a batch of records
-            if i % 100 == 0:
-                connection.commit()
-
-        connection.commit()
-
+            conn.commit()
 
 with DAG(
     "load_wpp_data_dag",
