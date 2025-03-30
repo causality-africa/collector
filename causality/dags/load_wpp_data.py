@@ -417,7 +417,7 @@ def load_wpp_indicators():
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (name) DO UPDATE SET
                     url = EXCLUDED.url,
-                    description = EXCLUDED.description
+                    description = EXCLUDED.description,
                     date = EXCLUDED.date
                 RETURNING id
             """
