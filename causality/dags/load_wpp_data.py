@@ -6,6 +6,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 from causality.utils.db import get_db_connection
+from causality.utils.errors import send_error_to_sentry
 from causality.utils.storage import download_from_backblaze
 
 default_args = {
@@ -13,6 +14,7 @@ default_args = {
     "depends_on_past": False,
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
+    "on_failure_callback": send_error_to_sentry,
 }
 
 INDICATOR_MAPPING = {
