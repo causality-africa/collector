@@ -5,7 +5,7 @@ import boto3
 from botocore.client import Config
 
 
-def download_from_backblaze(bucket_name, remote_path) -> str:
+def download_from_backblaze(bucket_name: str, remote_path: str) -> str:
     """
     Download a file from Backblaze B2 to a local path.
     """

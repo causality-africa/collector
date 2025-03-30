@@ -14,7 +14,7 @@ default_args = {
 }
 
 
-def load_countries():
+def load_countries() -> None:
     """Load countries from pycountry into database."""
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -23,22 +23,14 @@ def load_countries():
                     INSERT INTO locations (name, code, admin_level, map)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (code) DO UPDATE SET
-                        name = %s,
-                        admin_level = %s,
-                        map = %s
+                        name = EXCLUDED.name,
+                        admin_level = EXCLUDED.admin_level,
+                        map = EXCLUDED.map
                 """
 
                 cur.execute(
                     query,
-                    (
-                        country.name,
-                        country.alpha_2,
-                        0,  # Countries are top level
-                        None,
-                        country.name,
-                        0,
-                        None,
-                    ),
+                    (country.name, country.alpha_2, 0, None),
                 )
 
             conn.commit()

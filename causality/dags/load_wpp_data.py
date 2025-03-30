@@ -1,5 +1,5 @@
-from decimal import Decimal
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 import pandas as pd
 from airflow import DAG
@@ -20,42 +20,42 @@ INDICATOR_MAPPING = {
         "name": "Total Population",
         "code": "total-population",
         "category": "population",
-        "description": "Total population as of 1 July",
+        "description": "Total population as of 1st July",
         "unit": "persons",
     },
     "TPopulationMale1July": {
         "name": "Male Population",
         "code": "male-population",
         "category": "population",
-        "description": "Male population as of 1 July",
+        "description": "Male population as of 1st July",
         "unit": "persons",
     },
     "TPopulationFemale1July": {
         "name": "Female Population",
         "code": "female-population",
         "category": "population",
-        "description": "Female population as of 1 July",
+        "description": "Female population as of 1st July",
         "unit": "persons",
     },
     "PopDensity": {
         "name": "Population Density",
         "code": "population-density",
         "category": "population",
-        "description": "Population density as of 1 July",
+        "description": "Population density as of 1st July",
         "unit": "persons per square km",
     },
     "PopSexRatio": {
         "name": "Population Sex Ratio",
         "code": "sex-ratio",
         "category": "population",
-        "description": "Population sex ratio as of 1 July",
+        "description": "Population sex ratio as of 1st July",
         "unit": "males per 100 females",
     },
     "MedianAgePop": {
         "name": "Median Age",
         "code": "median-age",
         "category": "population",
-        "description": "Median age as of 1 July",
+        "description": "Median age as of 1st July",
         "unit": "years",
     },
     "NatChange": {
@@ -413,11 +413,12 @@ def load_wpp_indicators():
         # Create data source for WPP
         with conn.cursor() as cur:
             source_query = """
-                INSERT INTO data_sources (name, url, description)
-                VALUES (%s, %s, %s)
+                INSERT INTO data_sources (name, url, description, date)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (name) DO UPDATE SET
                     url = EXCLUDED.url,
                     description = EXCLUDED.description
+                    date = EXCLUDED.date
                 RETURNING id
             """
 
@@ -427,6 +428,7 @@ def load_wpp_indicators():
                     "UN World Population Prospects",
                     "https://population.un.org/wpp/",
                     "United Nations population estimates and projections",
+                    "2024-08-01",
                 ),
             )
             source_id = cur.fetchone()[0]
@@ -464,7 +466,7 @@ def load_wpp_indicators():
 
 def load_wpp_data(**context):
     """Load WPP data into the database."""
-    # Get indicator mapping and source ID from previous task
+    # Get source ID from the previous task
     ti = context["ti"]
     source_id = ti.xcom_pull(task_ids="load_wpp_indicators")
 
@@ -477,7 +479,6 @@ def load_wpp_data(**context):
     wpp_data = pd.read_csv(wpp_file, delimiter=",")
 
     with get_db_connection() as conn:
-        # Process each row in the WPP data
         with conn.cursor() as cur:
             for i, row in wpp_data.iterrows():
                 if not pd.notna(row["ISO2_code"]):
@@ -531,9 +532,8 @@ def load_wpp_data(**context):
                                 ),
                             )
 
-                # Commit after processing a batch of records
                 if i % 100 == 0:
-                    conn.commit()
+                    conn.commit()  # Commit in batches
 
             conn.commit()
 
