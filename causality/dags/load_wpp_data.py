@@ -61,14 +61,14 @@ INDICATOR_MAPPING = {
         "unit": "years",
     },
     "NatChange": {
-        "name": "Natural Change",
+        "name": "Population Natural Change",
         "code": "population-natural-change",
         "category": "population",
         "description": "Births minus Deaths",
         "unit": "persons",
     },
     "NatChangeRT": {
-        "name": "Rate of Natural Change",
+        "name": "Rate of Population Natural Change",
         "code": "population-natural-change-rate",
         "category": "population",
         "description": "Rate of natural population change",
@@ -285,7 +285,7 @@ INDICATOR_MAPPING = {
         "unit": "persons",
     },
     "Q5": {
-        "name": "Under-five Mortality Rate",
+        "name": "Mortality Before Age 5",
         "code": "under5-mortality-rate",
         "category": "population",
         "description": "Deaths of children under age 5 per 1000 live births",
@@ -378,14 +378,14 @@ INDICATOR_MAPPING = {
     "NetMigrations": {
         "name": "Net Number of Migrants",
         "code": "net-migrants",
-        "category": "population",
+        "category": "migration",
         "description": "Net number of migrants (immigrants minus emigrants)",
         "unit": "persons",
     },
     "CNMR": {
         "name": "Net Migration Rate",
         "code": "net-migration-rate",
-        "category": "population",
+        "category": "migration",
         "description": "Net migration per 1000 population",
         "unit": "per 1000 population",
     },
@@ -546,7 +546,7 @@ with DAG(
     description="Load WPP demographic data into database",
     schedule_interval="@once",
     start_date=datetime(2025, 3, 29),
-    tags=["demographics"],
+    tags=["population"],
 ) as dag:
     create_indicators_task = PythonOperator(
         task_id="load_wpp_indicators",
