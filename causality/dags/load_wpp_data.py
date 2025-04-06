@@ -476,13 +476,13 @@ def load_wpp_data(**context):
     wpp_file = download_from_backblaze(
         "causality-africa",
         "demographics/WPP2024_Demographic_Indicators_Medium.csv",
+        ".csv",
     )
-
-    wpp_data = pd.read_csv(wpp_file, delimiter=",")
+    df = pd.read_csv(wpp_file, delimiter=",")
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            for i, row in wpp_data.iterrows():
+            for i, row in df.iterrows():
                 if not pd.notna(row["ISO2_code"]):
                     continue
 
@@ -546,7 +546,7 @@ with DAG(
     description="Load WPP demographic data into database",
     schedule_interval="@once",
     start_date=datetime(2025, 3, 29),
-    tags=["population"],
+    tags=["demographics"],
 ) as dag:
     create_indicators_task = PythonOperator(
         task_id="load_wpp_indicators",

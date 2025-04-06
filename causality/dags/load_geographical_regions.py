@@ -189,6 +189,37 @@ REGIONS = {
             "ZW",
         ],
     },
+    "AF-ISL": {
+        "name": "African Islands",
+        "description": "Island nations in Africa",
+        "countries": ["CV", "KM", "MG", "MU", "ST", "SC"],
+    },
+    "AF-LOCKED": {
+        "name": "African Landlocked Countries",
+        "description": "Countries in Africa without coastline",
+        "countries": [
+            "BF",
+            "BI",
+            "CF",
+            "TD",
+            "ET",
+            "LS",
+            "MW",
+            "ML",
+            "NE",
+            "RW",
+            "SS",
+            "SZ",
+            "UG",
+            "ZM",
+            "ZW",
+        ],
+    },
+    "AF-SAHEL": {
+        "name": "Sahel Region",
+        "description": "Countries in Africa's Sahel region",
+        "countries": ["BF", "TD", "ML", "MR", "NE", "SD", "SN"],
+    },
 }
 
 
@@ -247,7 +278,7 @@ def link_countries_to_regions(region_ids: dict) -> None:
 
 
 def load_geographical_regions() -> None:
-    """Load geographical regions in database."""
+    """Load geographical regions into database."""
     region_ids = create_regions()
     link_countries_to_regions(region_ids)
 
@@ -255,7 +286,7 @@ def load_geographical_regions() -> None:
 with DAG(
     "load_geographical_regions_dag",
     default_args=default_args,
-    description="Load geographical regions in database",
+    description="Load geographical regions into database",
     schedule_interval="@once",
     start_date=datetime(2025, 3, 23),
     tags=["foundation"],
