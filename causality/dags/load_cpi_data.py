@@ -36,7 +36,7 @@ def load_cpi_data():
         with conn.cursor() as cur:
             # Create CPI indicator
             cur.execute(
-                """
+            """
                 INSERT INTO indicators (name, code, category, description, unit, data_type)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (code) DO UPDATE SET
@@ -59,7 +59,7 @@ def load_cpi_data():
 
             # Create Transparency International source
             cur.execute(
-                """
+            """
                 INSERT INTO data_sources (name, url, description, date)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (name) DO UPDATE SET
@@ -105,7 +105,7 @@ def load_cpi_data():
                         date_str = f"{year}-01-01"
 
                         cur.execute(
-                            """
+                        """
                             INSERT INTO data_points (
                                 entity_type, entity_id, indicator_id, source_id,
                                 date, numeric_value, text_value
