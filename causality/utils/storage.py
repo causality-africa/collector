@@ -5,9 +5,9 @@ import boto3
 from botocore.client import Config
 
 
-def download_from_backblaze(bucket_name: str, remote_path: str) -> str:
+def download_from_backblaze(bucket_name: str, remote_path: str, suffix: str) -> str:
     """Download a file from Backblaze B2 to a local path."""
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     local_path = temp_file.name
     temp_file.close()
 
