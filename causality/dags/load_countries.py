@@ -66,7 +66,7 @@ with DAG(
     start_date=datetime(2025, 3, 23),
     tags=["foundation"],
 ) as dag:
-    fetch_and_load_task = PythonOperator(
+    load_data_task = PythonOperator(
         task_id="load_countries",
         python_callable=load_countries,
     )
