@@ -34,9 +34,30 @@ def load_cpi_data():
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            # Create CPI indicator
-            cur.execute(
+            # Create Transparency International source
+            source_query = """
+                INSERT INTO data_sources (name, url, description, date)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (name) DO UPDATE SET
+                    url = EXCLUDED.url,
+                    description = EXCLUDED.description,
+                    date = EXCLUDED.date
+                RETURNING id
             """
+
+            cur.execute(
+                source_query,
+                (
+                    "Transparency International",
+                    "https://www.transparency.org/en/cpi/2024",
+                    "Corruption Perceptions Index",
+                    "2024-01-01",
+                ),
+            )
+            source_id = cur.fetchone()[0]
+
+            # Create CPI indicator
+            indicator_query = """
                 INSERT INTO indicators (name, code, category, description, unit, data_type)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (code) DO UPDATE SET
@@ -45,7 +66,10 @@ def load_cpi_data():
                     description = EXCLUDED.description,
                     unit = EXCLUDED.unit
                 RETURNING id
-            """,
+            """
+
+            cur.execute(
+                indicator_query,
                 (
                     "Corruption Perceptions Index",
                     "cpi",
@@ -56,26 +80,6 @@ def load_cpi_data():
                 ),
             )
             indicator_id = cur.fetchone()[0]
-
-            # Create Transparency International source
-            cur.execute(
-            """
-                INSERT INTO data_sources (name, url, description, date)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (name) DO UPDATE SET
-                    url = EXCLUDED.url,
-                    description = EXCLUDED.description
-                    date = EXCLUDED.date
-                RETURNING id
-            """,
-                (
-                    "Transparency International",
-                    "https://www.transparency.org/en/cpi/2024",
-                    "Corruption Perceptions Index",
-                    "2024-01-01",
-                ),
-            )
-            source_id = cur.fetchone()[0]
 
             for _, row in df.iterrows():
                 iso3 = row["ISO3"]
@@ -97,15 +101,14 @@ def load_cpi_data():
                 location_id = result[0]
 
                 # Insert data points for each available year
-                for year in range(YEAR_START, YEAR_END+1):
+                for year in range(YEAR_START, YEAR_END + 1):
                     score_col = f"CPI score {year}"
 
                     if score_col in row and pd.notna(row[score_col]):
                         score = float(row[score_col])
                         date_str = f"{year}-01-01"
 
-                        cur.execute(
-                        """
+                        data_query = """
                             INSERT INTO data_points (
                                 entity_type, entity_id, indicator_id, source_id,
                                 date, numeric_value, text_value
@@ -113,7 +116,9 @@ def load_cpi_data():
                             VALUES (%s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (entity_type, entity_id, indicator_id, source_id, date)
                             DO UPDATE SET numeric_value = EXCLUDED.numeric_value
-                        """,
+                        """
+                        cur.execute(
+                            data_query,
                             (
                                 "location",
                                 location_id,
