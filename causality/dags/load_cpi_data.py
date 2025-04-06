@@ -30,7 +30,7 @@ def load_cpi_data():
         "governance/CPI2024-Results-and-trends.xlsx",
         ".xlsx",
     )
-    df = pd.read_excel(cpi_file)
+    df = pd.read_excel(cpi_file, "CPI Timeseries 2012 - 2024")
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
