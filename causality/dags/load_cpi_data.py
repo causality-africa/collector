@@ -32,10 +32,9 @@ def load_cpi_data():
     )
     df = pd.read_excel(cpi_file, "CPI Timeseries 2012 - 2024")
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            # Create Transparency International source
-            source_query = """
+    with get_db_connection() as conn, conn.cursor() as cur:
+        # Create Transparency International source
+        source_query = """
                 INSERT INTO data_sources (name, url, description, date)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (name) DO UPDATE SET
@@ -45,19 +44,19 @@ def load_cpi_data():
                 RETURNING id
             """
 
-            cur.execute(
-                source_query,
-                (
-                    "Transparency International",
-                    "https://www.transparency.org/en/cpi/2024",
-                    "Corruption Perceptions Index",
-                    "2024-01-01",
-                ),
-            )
-            source_id = cur.fetchone()[0]
+        cur.execute(
+            source_query,
+            (
+                "Transparency International",
+                "https://www.transparency.org/en/cpi/2024",
+                "Corruption Perceptions Index",
+                "2024-01-01",
+            ),
+        )
+        source_id = cur.fetchone()[0]
 
-            # Create CPI indicator
-            indicator_query = """
+        # Create CPI indicator
+        indicator_query = """
                 INSERT INTO indicators (name, code, category, description, unit, data_type)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (code) DO UPDATE SET
@@ -68,47 +67,47 @@ def load_cpi_data():
                 RETURNING id
             """
 
-            cur.execute(
-                indicator_query,
-                (
-                    "Corruption Perceptions Index",
-                    "cpi",
-                    "rule-of-law",
-                    "Perceived levels of public sector corruption in countries worldwide",
-                    "score",
-                    "numeric",
-                ),
-            )
-            indicator_id = cur.fetchone()[0]
+        cur.execute(
+            indicator_query,
+            (
+                "Corruption Perceptions Index",
+                "cpi",
+                "rule-of-law",
+                "Perceived levels of public sector corruption in countries worldwide",
+                "score",
+                "numeric",
+            ),
+        )
+        indicator_id = cur.fetchone()[0]
 
-            for _, row in df.iterrows():
-                iso3 = row["ISO3"]
-                iso2 = iso3_to_iso2(iso3)
+        for _, row in df.iterrows():
+            iso3 = row["ISO3"]
+            iso2 = iso3_to_iso2(iso3)
 
-                if not iso2:
-                    logging.warning(
-                        f"Could not find ISO2 code for {row['Country / Territory']} ({iso3})"
-                    )
-                    continue
+            if not iso2:
+                logging.warning(
+                    f"Could not find ISO2 code for {row['Country / Territory']} ({iso3})"
+                )
+                continue
 
-                # Get location_id from code
-                cur.execute("SELECT id FROM locations WHERE code = %s", (iso2,))
-                result = cur.fetchone()
+            # Get location_id from code
+            cur.execute("SELECT id FROM locations WHERE code = %s", (iso2,))
+            result = cur.fetchone()
 
-                if not result:
-                    continue
+            if not result:
+                continue
 
-                location_id = result[0]
+            location_id = result[0]
 
-                # Insert data points for each available year
-                for year in range(YEAR_START, YEAR_END + 1):
-                    score_col = f"CPI score {year}"
+            # Insert data points for each available year
+            for year in range(YEAR_START, YEAR_END + 1):
+                score_col = f"CPI score {year}"
 
-                    if score_col in row and pd.notna(row[score_col]):
-                        score = float(row[score_col])
-                        date_str = f"{year}-01-01"
+                if score_col in row and pd.notna(row[score_col]):
+                    score = float(row[score_col])
+                    date_str = f"{year}-01-01"
 
-                        data_query = """
+                    data_query = """
                             INSERT INTO data_points (
                                 entity_type, entity_id, indicator_id, source_id,
                                 date, numeric_value, text_value
@@ -117,20 +116,20 @@ def load_cpi_data():
                             ON CONFLICT (entity_type, entity_id, indicator_id, source_id, date)
                             DO UPDATE SET numeric_value = EXCLUDED.numeric_value
                         """
-                        cur.execute(
-                            data_query,
-                            (
-                                "location",
-                                location_id,
-                                indicator_id,
-                                source_id,
-                                date_str,
-                                score,
-                                None,
-                            ),
-                        )
+                    cur.execute(
+                        data_query,
+                        (
+                            "location",
+                            location_id,
+                            indicator_id,
+                            source_id,
+                            date_str,
+                            score,
+                            None,
+                        ),
+                    )
 
-            conn.commit()
+        conn.commit()
 
 
 with DAG(

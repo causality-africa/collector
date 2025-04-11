@@ -227,10 +227,9 @@ def create_regions() -> dict:
     """Create all African regions and return a mapping of codes to IDs."""
     region_ids = {}
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            for code, region_data in REGIONS.items():
-                query = """
+    with get_db_connection() as conn, conn.cursor() as cur:
+        for code, region_data in REGIONS.items():
+            query = """
                     INSERT INTO regions (name, code, description)
                     VALUES (%s, %s, %s)
                     ON CONFLICT (code) DO UPDATE SET
@@ -238,43 +237,38 @@ def create_regions() -> dict:
                         description = EXCLUDED.description
                     RETURNING id
                 """
-                cur.execute(
-                    query, (region_data["name"], code, region_data["description"])
-                )
-                region_ids[code] = cur.fetchone()[0]
+            cur.execute(query, (region_data["name"], code, region_data["description"]))
+            region_ids[code] = cur.fetchone()[0]
 
-            conn.commit()
+        conn.commit()
 
     return region_ids
 
 
 def link_countries_to_regions(region_ids: dict) -> None:
     """Link countries to their respective regions."""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            for region_code, region_data in REGIONS.items():
-                region_id = region_ids[region_code]
+    with get_db_connection() as conn, conn.cursor() as cur:
+        for region_code, region_data in REGIONS.items():
+            region_id = region_ids[region_code]
 
-                for country_code in region_data["countries"]:
-                    # Get location id for the country
-                    cur.execute(
-                        "SELECT id FROM locations WHERE code = %s", (country_code,)
-                    )
-                    result = cur.fetchone()
+            for country_code in region_data["countries"]:
+                # Get location id for the country
+                cur.execute("SELECT id FROM locations WHERE code = %s", (country_code,))
+                result = cur.fetchone()
 
-                    if not result:
-                        continue
+                if not result:
+                    continue
 
-                    location_id = result[0]
-                    query = """
+                location_id = result[0]
+                query = """
                         INSERT INTO location_in_region (location_id, region_id, join_date)
                         VALUES (%s, %s, %s)
                         ON CONFLICT (location_id, region_id) DO UPDATE SET
                             join_date = EXCLUDED.join_date
                     """
-                    cur.execute(query, (location_id, region_id, HISTORICAL_START_DATE))
+                cur.execute(query, (location_id, region_id, HISTORICAL_START_DATE))
 
-            conn.commit()
+        conn.commit()
 
 
 def load_geographical_regions() -> None:
