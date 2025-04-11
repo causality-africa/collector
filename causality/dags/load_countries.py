@@ -39,12 +39,11 @@ COMMON_NAMES = {
 
 def load_countries() -> None:
     """Load countries from pycountry into database."""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            for country in pycountry.countries:
-                name = COMMON_NAMES.get(country.alpha_2, country.name)
+    with get_db_connection() as conn, conn.cursor() as cur:
+        for country in pycountry.countries:
+            name = COMMON_NAMES.get(country.alpha_2, country.name)
 
-                query = """
+            query = """
                     INSERT INTO locations (name, code, admin_level, map)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (code) DO UPDATE SET
@@ -53,9 +52,9 @@ def load_countries() -> None:
                         map = EXCLUDED.map
                 """
 
-                cur.execute(query, (name, country.alpha_2, 0, None))
+            cur.execute(query, (name, country.alpha_2, 0, None))
 
-            conn.commit()
+        conn.commit()
 
 
 with DAG(
