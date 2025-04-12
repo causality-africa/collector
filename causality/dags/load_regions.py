@@ -4,7 +4,11 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 from causality.utils.db import get_db_connection
-from causality.utils.geo import get_geo_entity, get_or_create_geo_entity
+from causality.utils.geo import (
+    get_geo_entity,
+    get_or_create_geo_entity,
+    upsert_relationship,
+)
 from causality.utils.errors import send_error_to_sentry
 
 default_args = {
@@ -80,6 +84,7 @@ REGIONS = {
     "AFR-NA": {
         "name": "North Africa",
         "type": "region",
+        "parent": {"code": "AFR", "since": "0001-01-01"},
         "countries": [
             {"code": "DZ", "since": "0001-01-01"},
             {"code": "EG", "since": "0001-01-01"},
@@ -93,6 +98,7 @@ REGIONS = {
     "AFR-WA": {
         "name": "West Africa",
         "type": "region",
+        "parent": {"code": "AFR", "since": "0001-01-01"},
         "countries": [
             {"code": "BJ", "since": "0001-01-01"},
             {"code": "BF", "since": "0001-01-01"},
@@ -115,6 +121,7 @@ REGIONS = {
     "AFR-CA": {
         "name": "Central Africa",
         "type": "region",
+        "parent": {"code": "AFR", "since": "0001-01-01"},
         "countries": [
             {"code": "CM", "since": "0001-01-01"},
             {"code": "CF", "since": "0001-01-01"},
@@ -129,6 +136,7 @@ REGIONS = {
     "AFR-EA": {
         "name": "East Africa",
         "type": "region",
+        "parent": {"code": "AFR", "since": "0001-01-01"},
         "countries": [
             {"code": "BI", "since": "0001-01-01"},
             {"code": "DJ", "since": "0001-01-01"},
@@ -145,6 +153,7 @@ REGIONS = {
     "AFR-SA": {
         "name": "Southern Africa",
         "type": "region",
+        "parent": {"code": "AFR", "since": "0001-01-01"},
         "countries": [
             {"code": "AO", "since": "0001-01-01"},
             {"code": "BW", "since": "0001-01-01"},
@@ -165,6 +174,7 @@ REGIONS = {
     "AFR-SSA": {
         "name": "Sub-Saharan Africa",
         "type": "region",
+        "parent": {"code": "AFR", "since": "0001-01-01"},
         "countries": [
             {"code": "AO", "since": "0001-01-01"},
             {"code": "BJ", "since": "0001-01-01"},
@@ -219,6 +229,7 @@ REGIONS = {
     "AFR-ISL": {
         "name": "African Islands",
         "type": "region",
+        "parent": {"code": "AFR", "since": "0001-01-01"},
         "countries": [
             {"code": "CV", "since": "0001-01-01"},
             {"code": "KM", "since": "0001-01-01"},
@@ -231,6 +242,7 @@ REGIONS = {
     "AFR-LLC": {
         "name": "African Landlocked Countries",
         "type": "region",
+        "parent": {"code": "AFR", "since": "0001-01-01"},
         "countries": [
             {"code": "BF", "since": "0001-01-01"},
             {"code": "BI", "since": "0001-01-01"},
@@ -252,6 +264,7 @@ REGIONS = {
     "AFR-SHL": {
         "name": "Sahel",
         "type": "region",
+        "parent": {"code": "AFR", "since": "0001-01-01"},
         "countries": [
             {"code": "BF", "since": "0001-01-01"},
             {"code": "TD", "since": "0001-01-01"},
@@ -265,6 +278,7 @@ REGIONS = {
     "EAC": {
         "name": "East African Community",
         "type": "bloc",
+        "parent": {"code": "AFR", "since": "2000-07-07"},
         "countries": [
             {"code": "KE", "since": "2000-07-01"},
             {"code": "TZ", "since": "2000-07-01"},
@@ -285,24 +299,27 @@ def load_regions() -> None:
         for code, data in REGIONS.items():
             region = get_or_create_geo_entity(code, data["name"], data["type"], cursor)
 
+            parent_data = data.get("parent")
+            if parent_data:
+                parent = get_geo_entity(parent_data["code"], cursor)
+                upsert_relationship(
+                    parent.id,
+                    region.id,
+                    parent_data["since"],
+                    parent_data.get("until", None),
+                    cursor,
+                )
+
             for member in data["countries"]:
                 country = get_geo_entity(member["code"], cursor)
-
-                if not country:
-                    continue
-
-                query = """
-                INSERT INTO geo_relationships (parent_id, child_id, since, until)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (parent_id, child_id) DO UPDATE SET
-                    since = EXCLUDED.since,
-                    until = EXCLUDED.until
-                """
-
-                cursor.execute(
-                    query,
-                    (region.id, country.id, member["since"], member.get("until", None)),
-                )
+                if country:
+                    upsert_relationship(
+                        region.id,
+                        country.id,
+                        member["since"],
+                        member.get("until", None),
+                        cursor,
+                    )
 
             conn.commit()
 
