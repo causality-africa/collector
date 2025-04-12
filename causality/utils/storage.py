@@ -5,7 +5,7 @@ import boto3
 from botocore.client import Config
 
 
-def download_from_backblaze(bucket_name: str, remote_path: str, suffix: str) -> str:
+def download_from_backblaze(remote_path: str, suffix: str) -> str:
     """Download a file from Backblaze B2 to a local path."""
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     local_path = temp_file.name
@@ -19,5 +19,5 @@ def download_from_backblaze(bucket_name: str, remote_path: str, suffix: str) -> 
         config=Config(signature_version="s3v4"),
     )
 
-    s3.download_file(bucket_name, remote_path, local_path)
+    s3.download_file(os.environ.get("B2_BUCKET_NAME"), remote_path, local_path)
     return local_path
