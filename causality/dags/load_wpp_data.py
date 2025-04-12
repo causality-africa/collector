@@ -5,14 +5,18 @@ import pandas as pd
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
+from causality.utils.data_points import upsert_data_point
 from causality.utils.db import get_db_connection
 from causality.utils.errors import send_error_to_sentry
+from causality.utils.geo import get_geo_entity
+from causality.utils.indicators import get_indicator, get_or_create_indicator
+from causality.utils.sources import get_or_create_data_source
 from causality.utils.storage import download_from_backblaze
 
 default_args = {
     "owner": "causality",
     "depends_on_past": False,
-    "retries": 1,
+    "retries": 0,
     "retry_delay": timedelta(minutes=5),
     "on_failure_callback": send_error_to_sentry,
 }
@@ -411,58 +415,31 @@ IN_THOUSANDS = {
 
 def load_wpp_indicators():
     """Create indicators for WPP data."""
-    with get_db_connection() as conn, conn.cursor() as cur:
+    with get_db_connection() as conn, conn.cursor() as cursor:
         # Create data source for WPP
-        source_query = """
-                INSERT INTO data_sources (name, url, description, date)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (name) DO UPDATE SET
-                    url = EXCLUDED.url,
-                    description = EXCLUDED.description,
-                    date = EXCLUDED.date
-                RETURNING id
-            """
-
-        cur.execute(
-            source_query,
-            (
-                "UN World Population Prospects",
-                "https://population.un.org/wpp/",
-                "United Nations population estimates and projections",
-                "2024-08-01",
-            ),
+        source = get_or_create_data_source(
+            "UN World Population Prospects",
+            "https://population.un.org/wpp/",
+            "United Nations population estimates and projections",
+            "2024-08-01",
+            cursor,
         )
-        source_id = cur.fetchone()[0]
 
         # Create indicators
         for metadata in INDICATOR_MAPPING.values():
-            indicator_query = """
-                    INSERT INTO indicators (name, code, category, description, unit, data_type)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (code) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        category = EXCLUDED.category,
-                        description = EXCLUDED.description,
-                        unit = EXCLUDED.unit,
-                        data_type = EXCLUDED.data_type
-                    RETURNING id
-                """
-
-            cur.execute(
-                indicator_query,
-                (
-                    metadata["name"],
-                    metadata["code"],
-                    metadata["category"],
-                    metadata["description"],
-                    metadata["unit"],
-                    "numeric",
-                ),
+            get_or_create_indicator(
+                metadata["code"],
+                metadata["name"],
+                metadata["category"],
+                metadata["description"],
+                metadata["unit"],
+                "numeric",
+                cursor,
             )
 
         conn.commit()
 
-    return source_id
+    return source.id
 
 
 def load_wpp_data(**context):
@@ -473,64 +450,43 @@ def load_wpp_data(**context):
 
     # Load the WPP data
     wpp_file = download_from_backblaze(
-        "causality-africa",
         "demographics/WPP2024_Demographic_Indicators_Medium.csv",
         ".csv",
     )
     df = pd.read_csv(wpp_file, delimiter=",")
 
-    with get_db_connection() as conn, conn.cursor() as cur:
+    with get_db_connection() as conn, conn.cursor() as cursor:
         for i, row in df.iterrows():
             if not pd.notna(row["ISO2_code"]):
                 continue
 
-            # Get location ID for this country
-            loc_query = "SELECT id FROM locations WHERE code = %s"
-            cur.execute(loc_query, (row["ISO2_code"],))
-            loc_record = cur.fetchone()
+            country = get_geo_entity(row["ISO2_code"], cursor)
+            if not country:
+                continue
 
-            if loc_record:
-                location_id = loc_record[0]
+            # Process each indicator
+            year = int(row["Time"])
+            date_str = f"{year}-07-01"  # July 1st for mid-year data
 
-                # Process each indicator
-                year = int(row["Time"])
-                date_str = f"{year}-07-01"  # July 1st for mid-year data
+            for wpp_col, metadata in INDICATOR_MAPPING.items():
+                if pd.notna(row.get(wpp_col)):
+                    # Get indicator
+                    indicator = get_indicator(metadata["code"], cursor)
 
-                for wpp_col, metadata in INDICATOR_MAPPING.items():
-                    if pd.notna(row.get(wpp_col)):
-                        # Get indicator ID
-                        indicator = metadata["code"]
-                        ind_query = "SELECT id FROM indicators WHERE code = %s"
-                        cur.execute(ind_query, (indicator,))
-                        indicator_id = cur.fetchone()[0]
+                    # Insert the data point
+                    value = Decimal(row[wpp_col])
+                    if indicator.code in IN_THOUSANDS:
+                        value *= 1_000
 
-                        # Insert the data point
-                        data_query = """
-                                INSERT INTO data_points (
-                                    entity_type, entity_id, indicator_id, source_id,
-                                    date, numeric_value, text_value
-                                )
-                                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (entity_type, entity_id, indicator_id, source_id, date)
-                                DO UPDATE SET numeric_value = EXCLUDED.numeric_value
-                            """
-
-                        value = Decimal(row[wpp_col])
-                        if indicator in IN_THOUSANDS:
-                            value *= 1_000
-
-                        cur.execute(
-                            data_query,
-                            (
-                                "location",
-                                location_id,
-                                indicator_id,
-                                source_id,
-                                date_str,
-                                value,
-                                None,
-                            ),
-                        )
+                    upsert_data_point(
+                        country.id,
+                        indicator.id,
+                        source_id,
+                        date_str,
+                        value,
+                        None,
+                        cursor,
+                    )
 
             if i % 100 == 0:
                 conn.commit()  # Commit in batches
@@ -546,6 +502,7 @@ with DAG(
     start_date=datetime(2025, 3, 29),
     tags=["demographics"],
 ) as dag:
+
     create_indicators_task = PythonOperator(
         task_id="load_wpp_indicators",
         python_callable=load_wpp_indicators,

@@ -5,12 +5,13 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 from causality.utils.db import get_db_connection
+from causality.utils.geo import get_or_create_geo_entity
 from causality.utils.errors import send_error_to_sentry
 
 default_args = {
     "owner": "causality",
     "depends_on_past": False,
-    "retries": 1,
+    "retries": 0,
     "retry_delay": timedelta(minutes=5),
     "on_failure_callback": send_error_to_sentry,
 }
@@ -39,20 +40,14 @@ COMMON_NAMES = {
 
 def load_countries() -> None:
     """Load countries from pycountry into database."""
-    with get_db_connection() as conn, conn.cursor() as cur:
+    with get_db_connection() as conn, conn.cursor() as cursor:
         for country in pycountry.countries:
-            name = COMMON_NAMES.get(country.alpha_2, country.name)
-
-            query = """
-                    INSERT INTO locations (name, code, admin_level, map)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (code) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        admin_level = EXCLUDED.admin_level,
-                        map = EXCLUDED.map
-                """
-
-            cur.execute(query, (name, country.alpha_2, 0, None))
+            get_or_create_geo_entity(
+                country.alpha_2,
+                COMMON_NAMES.get(country.alpha_2, country.name),
+                "country",
+                cursor,
+            )
 
         conn.commit()
 
@@ -65,6 +60,7 @@ with DAG(
     start_date=datetime(2025, 3, 23),
     tags=["foundation"],
 ) as dag:
+
     load_data_task = PythonOperator(
         task_id="load_countries",
         python_callable=load_countries,

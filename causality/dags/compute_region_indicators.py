@@ -4,13 +4,16 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
+from causality.utils.data_points import upsert_data_point
 from causality.utils.db import get_db_connection
 from causality.utils.errors import send_error_to_sentry
+from causality.utils.indicators import get_indicator
+from causality.utils.sources import get_derived_data_source
 
 default_args = {
     "owner": "causality",
     "depends_on_past": False,
-    "retries": 1,
+    "retries": 0,
     "retry_delay": timedelta(minutes=5),
     "on_failure_callback": send_error_to_sentry,
 }
@@ -53,42 +56,35 @@ derived_indicators = {
 }
 
 
-def get_indicator_id(indicator_code, cursor):
-    """Get indicator ID from code."""
-    query = "SELECT id FROM indicators WHERE code = %s"
-    cursor.execute(query, (indicator_code,))
-    result = cursor.fetchone()
-    return result[0] if result else None
-
-
-def fetch_locations_in_region(region_id, year, cursor):
-    """Fetch locations that were members of a region during a given year."""
+def fetch_countries_in_region(region_id, year, cursor):
+    """Fetch countries that were members of a region during a given year."""
     query = """
-    SELECT location_id
-    FROM location_in_region
-    WHERE region_id = %s
-    AND join_date <= %s
-    AND (exit_date IS NULL OR exit_date > %s)
+    SELECT child_id
+    FROM geo_relationships
+    WHERE parent_id = %s
+    AND since <= %s
+    AND (until IS NULL OR until > %s)
     """
+
     cursor.execute(query, (region_id, f"{year}-12-31", f"{year}-01-01"))
     return [row[0] for row in cursor.fetchall()]
 
 
-def fetch_indicator_data(indicator_id, location_ids, year, cursor):
-    """Fetch indicator data for multiple locations."""
-    if not location_ids:
+def fetch_indicator_data(indicator_id, country_ids, year, cursor):
+    """Fetch indicator data for multiple countries."""
+    if not country_ids:
         return {}
 
-    placeholders = ",".join(["%s"] * len(location_ids))
+    placeholders = ",".join(["%s"] * len(country_ids))
     query = f"""
-    SELECT entity_id, numeric_value
+    SELECT geo_entity_id, numeric_value
     FROM data_points
     WHERE indicator_id = %s
-    AND entity_type = 'location'
-    AND entity_id IN ({placeholders})
+    AND geo_entity_id IN ({placeholders})
     AND date BETWEEN %s AND %s
     """
-    params = [indicator_id] + location_ids + [f"{year}-01-01", f"{year}-12-31"]
+
+    params = [indicator_id] + country_ids + [f"{year}-01-01", f"{year}-12-31"]
     cursor.execute(query, params)
     return {row[0]: row[1] for row in cursor.fetchall()}
 
@@ -109,62 +105,48 @@ def calculate_sum(values):
 
 def insert_data_points(data_points, cursor):
     """Insert multiple data points into database."""
-    if not data_points:
-        return
-
-    query = """
-    INSERT INTO data_points
-    (entity_type, entity_id, indicator_id, source_id, date, numeric_value, text_value)
-    VALUES (%s, %s, %s, %s, %s, %s, %s)
-    ON CONFLICT (entity_type, entity_id, indicator_id, source_id, date)
-    DO UPDATE SET
-        numeric_value = EXCLUDED.numeric_value,
-        text_value = EXCLUDED.text_value
-    """
-
-    values = [
-        (
-            dp["entity_type"],
-            dp["entity_id"],
+    for dp in data_points:
+        upsert_data_point(
+            dp["geo_entity_id"],
             dp["indicator_id"],
             dp["source_id"],
             dp["date"],
             dp["numeric_value"],
             dp["text_value"],
+            cursor,
         )
-        for dp in data_points
-    ]
-
-    cursor.executemany(query, values)
 
 
 def calculate_base_indicators(**kwargs):
     """Calculate base indicators for all regions."""
     results = []
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM regions")
-        regions = cur.fetchall()
+    with get_db_connection() as conn, conn.cursor() as cursor:
+        source = get_derived_data_source(cursor)
+
+        cursor.execute(
+            "SELECT id FROM geo_entities WHERE type='region' OR type='bloc' OR type='continent'"
+        )
+        regions = cursor.fetchall()
 
         all_indicators = avg_indicators + sum_indicators
         for indicator_code in all_indicators:
-            indicator_id = get_indicator_id(indicator_code, cur)
-            if not indicator_id:
-                logging.warning(f"Indicator code {indicator_code} not found.")
+            indicator = get_indicator(indicator_code, cursor)
+            if not indicator:
+                logging.warning(f"Indicator {indicator_code} not found.")
                 continue
 
             # Find years with data for this specific indicator
-            cur.execute(
+            cursor.execute(
                 """
-                    SELECT DISTINCT EXTRACT(YEAR FROM date) as year
-                    FROM data_points
-                    WHERE entity_type = 'location'
-                    AND indicator_id = %s
-                    ORDER BY year
+                SELECT DISTINCT EXTRACT(YEAR FROM date) as year
+                FROM data_points
+                WHERE indicator_id = %s
+                ORDER BY year
                 """,
-                (indicator_id,),
+                (indicator.id,),
             )
 
-            years = [int(row[0]) for row in cur.fetchall()]
+            years = [int(row[0]) for row in cursor.fetchall()]
             if not years:
                 logging.warning(f"No data years found for indicator {indicator_code}")
                 continue
@@ -182,12 +164,12 @@ def calculate_base_indicators(**kwargs):
             for year in years:
                 year_results = []
                 for region_id in [r[0] for r in regions]:
-                    location_ids = fetch_locations_in_region(region_id, year, cur)
+                    location_ids = fetch_countries_in_region(region_id, year, cursor)
                     if not location_ids:
                         continue
 
                     location_data = fetch_indicator_data(
-                        indicator_id, location_ids, year, cur
+                        indicator.id, location_ids, year, cursor
                     )
                     if not location_data:
                         continue
@@ -197,19 +179,17 @@ def calculate_base_indicators(**kwargs):
 
                     year_results.append(
                         {
-                            "entity_type": "region",
-                            "entity_id": region_id,
-                            "indicator_id": indicator_id,
+                            "geo_entity_id": region_id,
+                            "indicator_id": indicator.id,
                             "date": f"{year}-12-31",
                             "numeric_value": calculated_value,
                             "text_value": None,
-                            "source_id": 1,
+                            "source_id": source.id,
                         }
                     )
 
                 results.extend(year_results)
 
-                # Log progress
                 if year_results:
                     logging.info(
                         f"Processed {len(year_results)} regions for {indicator_code} in {year}"
@@ -217,7 +197,7 @@ def calculate_base_indicators(**kwargs):
 
             # Commit after each indicator
             if results:
-                insert_data_points(results, cur)
+                insert_data_points(results, cursor)
                 conn.commit()
                 logging.info(
                     f"Inserted {len(results)} data points for indicator {indicator_code}"
@@ -228,14 +208,18 @@ def calculate_base_indicators(**kwargs):
 def calculate_derived_indicators(**kwargs):
     """Calculate derived indicators for all regions."""
     results = []
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM regions")
-        regions = cur.fetchall()
+    with get_db_connection() as conn, conn.cursor() as cursor:
+        source = get_derived_data_source(cursor)
+
+        cursor.execute(
+            "SELECT id FROM geo_entities WHERE type='region' OR type='bloc' OR type='continent'"
+        )
+        regions = cursor.fetchall()
 
         for derived_code, config in derived_indicators.items():
-            derived_id = get_indicator_id(derived_code, cur)
-            if not derived_id:
-                logging.warning(f"Derived indicator code {derived_code} not found")
+            derived_indicator = get_indicator(derived_code, cursor)
+            if not derived_indicator:
+                logging.warning(f"Derived indicator {derived_code} not found")
                 continue
 
             # Get dependency indicator IDs
@@ -243,12 +227,12 @@ def calculate_derived_indicators(**kwargs):
             missing_dependency_defs = False
 
             for dep_code in config["dependencies"]:
-                dep_id = get_indicator_id(dep_code, cur)
-                if not dep_id:
-                    logging.warning(f"Dependency indicator code {dep_code} not found")
+                dep_indicator = get_indicator(dep_code, cursor)
+                if not dep_indicator:
+                    logging.warning(f"Dependency indicator {dep_code} not found")
                     missing_dependency_defs = True
                     break
-                dependency_ids[dep_code] = dep_id
+                dependency_ids[dep_code] = dep_indicator.id
 
             if missing_dependency_defs:
                 continue
@@ -257,20 +241,19 @@ def calculate_derived_indicators(**kwargs):
             dep_id_list = list(dependency_ids.values())
             placeholders = ",".join(["%s"] * len(dep_id_list))
 
-            cur.execute(
+            cursor.execute(
                 f"""
-                    SELECT EXTRACT(YEAR FROM date) as year, COUNT(DISTINCT indicator_id)
-                    FROM data_points
-                    WHERE entity_type = 'region'
-                    AND indicator_id IN ({placeholders})
-                    GROUP BY year
-                    HAVING COUNT(DISTINCT indicator_id) = %s
-                    ORDER BY year
+                SELECT EXTRACT(YEAR FROM date) as year, COUNT(DISTINCT indicator_id)
+                FROM data_points
+                WHERE indicator_id IN ({placeholders})
+                GROUP BY year
+                HAVING COUNT(DISTINCT indicator_id) = %s
+                ORDER BY year
                 """,
                 dep_id_list + [len(dep_id_list)],
             )
 
-            years = [int(row[0]) for row in cur.fetchall()]
+            years = [int(row[0]) for row in cursor.fetchall()]
 
             if not years:
                 logging.warning(
@@ -292,20 +275,20 @@ def calculate_derived_indicators(**kwargs):
                     for dep_code, dep_id in dependency_ids.items():
                         # Get the value for this specific year
                         query = """
-                            SELECT numeric_value
-                            FROM data_points
-                            WHERE entity_type = 'region'
-                            AND entity_id = %s
-                            AND indicator_id = %s
-                            AND date BETWEEN %s AND %s
-                            ORDER BY date DESC
-                            LIMIT 1
-                            """
-                        cur.execute(
+                        SELECT numeric_value
+                        FROM data_points
+                        WHERE geo_entity_id = %s
+                        AND indicator_id = %s
+                        AND date BETWEEN %s AND %s
+                        ORDER BY date DESC
+                        LIMIT 1
+                        """
+
+                        cursor.execute(
                             query,
                             (region_id, dep_id, f"{year}-01-01", f"{year}-12-31"),
                         )
-                        value = cur.fetchone()
+                        value = cursor.fetchone()
                         if not value:
                             missing_data = True
                             break
@@ -321,13 +304,12 @@ def calculate_derived_indicators(**kwargs):
 
                         results.append(
                             {
-                                "entity_type": "region",
-                                "entity_id": region_id,
-                                "indicator_id": derived_id,
+                                "geo_entity_id": region_id,
+                                "indicator_id": derived_indicator.id,
                                 "date": f"{year}-12-31",
                                 "numeric_value": derived_value,
                                 "text_value": None,
-                                "source_id": 1,
+                                "source_id": source.id,
                             }
                         )
                     except Exception as e:
@@ -337,7 +319,7 @@ def calculate_derived_indicators(**kwargs):
 
             # Commit after each indicator
             if results:
-                insert_data_points(results, cur)
+                insert_data_points(results, cursor)
                 conn.commit()
                 logging.info(
                     f"Inserted {len(results)} derived data points for indicator {derived_code}"
